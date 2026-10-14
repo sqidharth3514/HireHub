@@ -1,5 +1,37 @@
 const Application = require("../models/application.model");
 const Job = require("../models/job.model");
+const { PDFParse } = require("pdf-parse");
+const { matchResumeWithJob } = require("../services/ai.service");
+
+/**
+ * Helper to extract resume text from file buffer or text field
+ */
+async function extractResumeTextFromRequest(req) {
+  if (req.file) {
+    const mimetype = req.file.mimetype || "";
+    const originalname = (req.file.originalname || "").toLowerCase();
+
+    if (mimetype === "application/pdf" || originalname.endsWith(".pdf")) {
+      try {
+        const parser = new PDFParse({ data: req.file.buffer });
+        const parsed = await parser.getText();
+        await parser.destroy();
+        if (parsed && parsed.text && parsed.text.trim()) {
+          return parsed.text.trim();
+        }
+      } catch (err) {
+        console.warn("PDF extraction warning during application:", err.message);
+        const raw = req.file.buffer.toString("utf-8");
+        const clean = raw.replace(/[^\x20-\x7E\n\r\t]/g, " ").replace(/\s+/g, " ").trim();
+        if (clean.length > 30) return clean;
+      }
+    } else {
+      return req.file.buffer.toString("utf-8").trim();
+    }
+  }
+
+  return (req.body.resumeText || "").trim();
+}
 
 // ==========================================
 // 1. STUDENT - APPLY FOR JOB
@@ -30,11 +62,68 @@ const applyForJob = async (req, res) => {
       });
     }
 
+    const resumeText = await extractResumeTextFromRequest(req);
+    const resumeFileName = req.file ? req.file.originalname : (req.body.resumeFileName || "");
+
+    // Parse experience questions answered by candidate
+    let experienceAnswers = [];
+    if (req.body.experienceAnswers) {
+      if (typeof req.body.experienceAnswers === "string") {
+        try {
+          experienceAnswers = JSON.parse(req.body.experienceAnswers);
+        } catch (e) {
+          experienceAnswers = [];
+        }
+      } else if (Array.isArray(req.body.experienceAnswers)) {
+        experienceAnswers = req.body.experienceAnswers;
+      }
+    }
+
+    const phone = req.body.phone || "";
+    const coverNote = req.body.coverNote || "";
+
+    // Automatically calculate ATS score if resume text was extracted
+    let atsScore = typeof req.body.atsScore === "number" ? req.body.atsScore : 0;
+    let matchDetails = req.body.matchDetails || null;
+
+    if (!matchDetails && resumeText && resumeText.length > 20) {
+      try {
+        const evaluation = await matchResumeWithJob(resumeText, job);
+        atsScore = evaluation.atsScore || 0;
+        matchDetails = {
+          matchedSkills: evaluation.matchedSkills || [],
+          missingSkills: evaluation.missingSkills || [],
+          strengths: evaluation.strengths || [],
+          improvements: evaluation.improvements || [],
+          summary: evaluation.summary || "",
+        };
+      } catch (e) {
+        console.warn("ATS calculation warning during job apply:", e.message);
+      }
+    }
+
+    if (!matchDetails) {
+      matchDetails = {
+        matchedSkills: [],
+        missingSkills: [],
+        strengths: [],
+        improvements: [],
+        summary: "",
+      };
+    }
+
     // Create application
     const application = await Application.create({
       job: jobId,
       applicant: req.user.userId,
       status: "pending",
+      resumeFileName,
+      resumeText,
+      phone,
+      coverNote,
+      experienceAnswers,
+      atsScore,
+      matchDetails,
     });
 
     return res.status(201).json({
@@ -60,7 +149,7 @@ const getMyApplications = async (req, res) => {
     })
       .populate(
         "job",
-        "title description salary location jobType experienceLevel"
+        "title description salary location jobType experienceLevel requirements company"
       )
       .sort({ createdAt: -1 });
 
@@ -93,7 +182,7 @@ const getRecruiterApplications = async (req, res) => {
     const applications = await Application.find({
       job: { $in: jobIds },
     })
-      .populate("job", "title location salary")
+      .populate("job", "title location salary requirements jobType experienceLevel")
       .populate("applicant", "fullname email")
       .sort({ createdAt: -1 });
 

@@ -19,6 +19,48 @@ const applicationSchema = new mongoose.Schema(
       enum: ["pending", "accepted", "rejected"],
       default: "pending",
     },
+
+    resumeFileName: {
+      type: String,
+      default: "",
+    },
+
+    resumeText: {
+      type: String,
+      default: "",
+    },
+
+    phone: {
+      type: String,
+      default: "",
+    },
+
+    coverNote: {
+      type: String,
+      default: "",
+    },
+
+    experienceAnswers: [
+      {
+        skill: { type: String, required: true },
+        years: { type: String, required: true },
+      },
+    ],
+
+    atsScore: {
+      type: Number,
+      default: 0,
+      min: 0,
+      max: 100,
+    },
+
+    matchDetails: {
+      matchedSkills: [{ type: String }],
+      missingSkills: [{ type: String }],
+      strengths: [{ type: String }],
+      improvements: [{ type: String }],
+      summary: { type: String, default: "" },
+    },
   },
   {
     timestamps: true,

@@ -25,6 +25,11 @@ const userSchema = new mongoose.Schema(
       type: String,
       enum: ["student", "recruiter"],
       default: "student"
+    },
+
+    isVerified: {
+      type: Boolean,
+      default: false
     }
   },
   {
